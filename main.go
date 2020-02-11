@@ -7,6 +7,7 @@ import (
 	"os/signal"
 
 	"github.com/philips-labs/medical-delivery-drone/drone"
+	"github.com/philips-labs/medical-delivery-drone/server"
 	"github.com/philips-labs/medical-delivery-drone/video"
 )
 
@@ -14,6 +15,12 @@ func main() {
 	args := os.Args[1:]
 	ctx, cancel := context.WithCancel(context.Background())
 	go gracefulShutdown(cancel)
+
+	go func() {
+		s, _ := server.NewServer(":5000")
+		s.Start()
+		defer s.Close()
+	}()
 
 	converter, err := video.NewConverter(len(args) > 0)
 	if err != nil {
