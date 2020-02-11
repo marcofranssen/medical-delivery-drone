@@ -1,11 +1,14 @@
 package video
 
 import (
+	"bytes"
 	"context"
+	"encoding/gob"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"os/exec"
 	"strconv"
 
@@ -20,13 +23,14 @@ const (
 
 // Converter converts raw drone video data using ffmpeg
 type Converter struct {
-	ffmpeg *exec.Cmd
-	writer io.WriteCloser
-	reader io.ReadCloser
+	ffmpeg     *exec.Cmd
+	fileWriter *bytes.Buffer
+	writer     io.WriteCloser
+	reader     io.ReadCloser
 }
 
 // NewConverter creates a new instance of Converter
-func NewConverter() (*Converter, error) {
+func NewConverter(writeRawToFile bool) (*Converter, error) {
 	ffmpeg := exec.Command("ffmpeg", "-hwaccel", "auto", "-hwaccel_device", "opencl", "-i", "pipe:0",
 		"-pix_fmt", "bgr24", "-s", strconv.Itoa(frameX)+"x"+strconv.Itoa(frameY), "-f", "rawvideo", "pipe:1")
 	ffmpegIn, err := ffmpeg.StdinPipe()
@@ -38,10 +42,16 @@ func NewConverter() (*Converter, error) {
 		return nil, err
 	}
 
+	var fileWriter *bytes.Buffer = nil
+	if writeRawToFile {
+		fileWriter = bytes.NewBuffer(make([]byte, 0))
+	}
+
 	return &Converter{
-		ffmpeg: ffmpeg,
-		writer: ffmpegIn,
-		reader: ffmpegOut,
+		ffmpeg:     ffmpeg,
+		fileWriter: fileWriter,
+		writer:     ffmpegIn,
+		reader:     ffmpegOut,
 	}, nil
 }
 
@@ -58,6 +68,13 @@ func (c Converter) Start(ctx context.Context) (<-chan []byte, error) {
 
 // Write writes data to pipe
 func (c Converter) Write(pkt []byte) (int, error) {
+	if c.fileWriter != nil {
+		n, err := c.fileWriter.Write(pkt)
+		if err != nil {
+			return n, err
+		}
+	}
+
 	return c.writer.Write(pkt)
 }
 
@@ -66,8 +83,31 @@ func (c Converter) Read(pkt []byte) (int, error) {
 	return c.reader.Read(pkt)
 }
 
+func (c Converter) writeToFile() error {
+	if c.fileWriter != nil {
+		err := os.MkdirAll("fixtures", 0755)
+		if err != nil {
+			return err
+		}
+
+		file, err := os.OpenFile("fixtures/video-stream.dat", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+
+		if err := gob.NewEncoder(file).Encode(c.fileWriter.Bytes()); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // Close closes the reader and writer
 func (c Converter) Close() error {
+	c.writeToFile()
+
 	errW := c.writer.Close()
 	errR := c.reader.Close()
 

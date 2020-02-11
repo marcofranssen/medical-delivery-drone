@@ -11,10 +11,11 @@ import (
 )
 
 func main() {
+	args := os.Args[1:]
 	ctx, cancel := context.WithCancel(context.Background())
 	go gracefulShutdown(cancel)
 
-	converter, err := video.NewConverter()
+	converter, err := video.NewConverter(len(args) > 0)
 	if err != nil {
 		return
 	}
